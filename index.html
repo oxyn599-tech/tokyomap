@@ -13,10 +13,10 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,'Helv
 .spin{width:36px;height:36px;border:3px solid #c5d5f5;border-top-color:#1a73e8;border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
 #loading.hide{display:none}
-#bar{position:fixed;bottom:0;left:0;right:0;height:52px;background:#fff;border-top:1px solid #e0e0e0;display:flex;align-items:center;padding:0 10px;gap:8px;z-index:10}
-.btn{flex:1;height:38px;border:1.5px solid #ddd;border-radius:19px;background:#f5f5f5;font-size:12px;font-weight:700;color:#555;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px}
+#bar{position:fixed;bottom:0;left:0;right:0;height:52px;background:#fff;border-top:1px solid #e0e0e0;display:flex;align-items:center;padding:0 10px;gap:6px;z-index:10}
+.btn{flex:1;height:38px;border:1.5px solid #ddd;border-radius:19px;background:#f5f5f5;font-size:11px;font-weight:700;color:#555;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px}
 .btn.on{background:#1a73e8;border-color:#1a73e8;color:#fff}
-.leg-btn{flex:0 0 44px;font-size:20px;background:#fff;border:1.5px solid #ddd;border-radius:19px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.leg-btn{flex:0 0 42px;font-size:20px;background:#fff;border:1.5px solid #ddd;border-radius:19px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .leg-btn.on{background:#e8f0fe;border-color:#1a73e8;color:#1a73e8}
 #drawer{position:fixed;left:0;right:0;bottom:52px;background:#fff;border-radius:14px 14px 0 0;box-shadow:0 -3px 16px rgba(0,0,0,.13);transform:translateY(100%);transition:transform .28s ease;z-index:9;max-height:56vh;display:flex;flex-direction:column}
 #drawer.on{transform:translateY(0)}
@@ -56,6 +56,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,'Helv
 <div id="bar">
   <button class="btn on" id="b-muni" onclick="toggleLayer('muni')">🗺 区市町村</button>
   <button class="btn on" id="b-rail" onclick="toggleLayer('rail')">🚃 路線図</button>
+  <button class="btn on" id="b-sta"  onclick="toggleLayer('sta')">🚉 駅名</button>
   <button class="leg-btn" id="b-leg" onclick="toggleDrawer()">☰</button>
 </div>
 <script>
@@ -79,11 +80,11 @@ const LINES={
 };
 let map,muniLayer,drawerOpen=false;
 var muniLines=[];
+var stationMarkers=[];
 const pls={};
-const layerOn={muni:true,rail:true};
+const layerOn={muni:true,rail:true,sta:true};
 const lineOn={};
 
-// test.htmlと同じシンプルな方式
 function initMap(){
   try {
     var el=document.getElementById("map");
@@ -103,10 +104,12 @@ function initMap(){
       clickableIcons:false,
       styles:[
         {featureType:"transit.line",elementType:"geometry",stylers:[{visibility:"off"}]},
-        {featureType:"transit.station",elementType:"labels.icon",stylers:[{visibility:"off"}]}
+        {featureType:"transit.station",elementType:"labels.icon",stylers:[{visibility:"off"}]},
+        {featureType:"transit.station",elementType:"labels.text",stylers:[{visibility:"off"}]}
       ]
     });
 
+    map.addListener("zoom_changed",updateStations);
     buildLegend();
 
     // ── 市区町村 ──
@@ -114,16 +117,15 @@ function initMap(){
     fetch("municipalities.json")
       .then(function(r){return r.json();})
       .then(function(muniData){
-        // タップ用の透明レイヤー
         muniLayer=new google.maps.Data({map:map});
         muniLayer.addGeoJson(muniData);
-        muniLayer.setStyle({fillColor:"#ff0000",fillOpacity:.03,strokeOpacity:0,clickable:true});
+        muniLayer.setStyle({fillColor:"#ff0000",fillOpacity:.02,strokeOpacity:0,clickable:true});
         muniLayer.addListener("click",function(e){
           var n=e.feature.getProperty("name");
           if(n)toast(n);
         });
-        // 赤い点線の境界線
-        var dash={path:"M 0,-1 0,1",strokeOpacity:1,scale:2.5};
+        // 薄い赤の点線（境界線）
+        var dot={path:"M 0,-1 0,1",strokeOpacity:0.65,scale:1.8};
         muniData.features.forEach(function(feat){
           var polys=[];
           if(feat.geometry.type==="Polygon") polys=feat.geometry.coordinates;
@@ -131,12 +133,11 @@ function initMap(){
             feat.geometry.coordinates.forEach(function(p){polys=polys.concat(p);});
           polys.forEach(function(ring){
             var path=ring.map(function(c){return{lat:c[1],lng:c[0]};});
-            var pl=new google.maps.Polyline({
-              path:path,strokeColor:"#cc2222",strokeOpacity:0,strokeWeight:2,
-              icons:[{icon:dash,offset:"0",repeat:"9px"}],
+            muniLines.push(new google.maps.Polyline({
+              path:path,strokeColor:"#e05050",strokeOpacity:0,strokeWeight:1.5,
+              icons:[{icon:dot,offset:"0",repeat:"13px"}],
               map:map,clickable:false,zIndex:3
-            });
-            muniLines.push(pl);
+            }));
           });
         });
         // ── 路線図 ──
@@ -153,10 +154,40 @@ function initMap(){
           var coords=f.geometry.coordinates.map(function(p){return{lat:p[1],lng:p[0]};});
           if(coords.length<2)return;
           var isJr=f.properties.k==="jr";
-          var pl=new google.maps.Polyline({path:coords,strokeColor:color,strokeWeight:isJr?4:3,strokeOpacity:.92,map:map,clickable:false,zIndex:isJr?2:1});
+          var pl=new google.maps.Polyline({
+            path:coords,strokeColor:color,
+            strokeWeight:isJr?5:4,strokeOpacity:.9,
+            map:map,clickable:false,zIndex:isJr?2:1
+          });
           if(!pls[lk])pls[lk]=[];
           pls[lk].push(pl);
         });
+        // ── 駅名 ──
+        setTxt("駅データ読込中...");
+        return fetch("stations.json");
+      })
+      .then(function(r){return r.json();})
+      .then(function(stData){
+        var icon={
+          path:google.maps.SymbolPath.CIRCLE,
+          scale:3.5,
+          fillColor:"#ffffff",
+          fillOpacity:1,
+          strokeColor:"#444444",
+          strokeWeight:1.5
+        };
+        stData.features.forEach(function(f){
+          var m=new google.maps.Marker({
+            position:{lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]},
+            label:{text:f.properties.n,fontSize:"9px",color:"#222222",fontWeight:"600"},
+            icon:icon,
+            map:null,
+            clickable:false,
+            zIndex:10
+          });
+          stationMarkers.push(m);
+        });
+        updateStations();
         document.getElementById("loading").classList.add("hide");
       })
       .catch(function(e){
@@ -175,9 +206,14 @@ window.gm_authFailure=function(){
   document.getElementById("loading").innerHTML=
     '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">'+
     '<div style="font-size:40px;margin-bottom:10px">🔑</div>'+
-    '<b>APIキーエラー</b><br><br>Google Cloud ConsoleでAPIキーを確認してください</div>';
+    '<b>APIキーエラー</b></div>';
 };
 
+function updateStations(){
+  if(!map)return;
+  var show=layerOn.sta&&map.getZoom()>=13;
+  stationMarkers.forEach(function(m){m.setMap(show?map:null);});
+}
 function setTxt(t){document.getElementById("ltxt").textContent=t;}
 var _t;
 function toast(msg){
@@ -192,11 +228,14 @@ function toggleLayer(t){
     if(muniLayer)muniLayer.setMap(layerOn.muni?map:null);
     muniLines.forEach(function(l){l.setMap(layerOn.muni?map:null);});
     document.getElementById("li-muni").classList.toggle("off",!layerOn.muni);
-  } else {
+  } else if(t==="rail"){
     Object.keys(pls).forEach(function(lk){
       var show=layerOn.rail&&lineOn[lk]!==false;
       pls[lk].forEach(function(p){p.setMap(show?map:null);});
     });
+    updateStations();
+  } else if(t==="sta"){
+    updateStations();
   }
 }
 function toggleLine(key){
@@ -229,7 +268,6 @@ function li(c){
   return d;
 }
 </script>
-<!-- test.htmlと同じシンプルな方式 -->
 <script
   src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDd3mAUK7387OySl-t9LQMmMQ6P-vljR-0&loading=async&callback=initMap&language=ja"
   async defer>
