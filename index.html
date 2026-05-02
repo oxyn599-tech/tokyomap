@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>東京路線マップ</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,'Helvetica Neue',sans-serif}
+#map{position:absolute;top:0;left:0;right:0;bottom:52px}
+#loading{position:fixed;top:0;left:0;right:0;bottom:0;background:#e8f0fe;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50;font-size:13px;color:#333}
+.spin{width:36px;height:36px;border:3px solid #c5d5f5;border-top-color:#1a73e8;border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+#loading.hide{display:none}
+#bar{position:fixed;bottom:0;left:0;right:0;height:52px;background:#fff;border-top:1px solid #e0e0e0;display:flex;align-items:center;padding:0 10px;gap:8px;z-index:10}
+.btn{flex:1;height:38px;border:1.5px solid #ddd;border-radius:19px;background:#f5f5f5;font-size:12px;font-weight:700;color:#555;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:4px}
+.btn.on{background:#1a73e8;border-color:#1a73e8;color:#fff}
+.leg-btn{flex:0 0 44px;font-size:20px;background:#fff;border:1.5px solid #ddd;border-radius:19px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.leg-btn.on{background:#e8f0fe;border-color:#1a73e8;color:#1a73e8}
+#drawer{position:fixed;left:0;right:0;bottom:52px;background:#fff;border-radius:14px 14px 0 0;box-shadow:0 -3px 16px rgba(0,0,0,.13);transform:translateY(100%);transition:transform .28s ease;z-index:9;max-height:56vh;display:flex;flex-direction:column}
+#drawer.on{transform:translateY(0)}
+.dbar{display:flex;align-items:center;justify-content:center;padding:10px}
+.dbar::before{content:'';width:36px;height:4px;background:#ddd;border-radius:2px}
+.dtitle{font-size:13px;font-weight:700;color:#333;padding:0 16px 10px;border-bottom:1px solid #f0f0f0}
+.dscroll{overflow-y:auto;padding:10px 14px 14px;-webkit-overflow-scrolling:touch}
+.sec{font-size:10px;font-weight:700;color:#aaa;letter-spacing:.8px;margin:8px 0 5px}
+.sec:first-child{margin-top:0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.li{display:flex;align-items:center;gap:7px;padding:7px 8px;border-radius:8px;cursor:pointer}
+.li:active{background:#f5f5f5}
+.li.off{opacity:.3}
+.ln{width:20px;height:4px;border-radius:2px;flex-shrink:0}
+.lb{font-size:12px;color:#333;font-weight:500}
+.ab{width:14px;height:12px;border:2px solid #4a90d9;background:rgba(74,144,217,.1);border-radius:2px;flex-shrink:0}
+#toast{position:fixed;top:14px;left:50%;transform:translateX(-50%);background:rgba(20,20,20,.82);color:#fff;padding:7px 16px;border-radius:18px;font-size:13px;font-weight:600;z-index:30;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div id="loading"><div class="spin"></div><div id="ltxt">地図を読み込み中...</div></div>
+<div id="map"></div>
+<div id="toast"></div>
+<div id="drawer">
+  <div class="dbar"></div>
+  <div class="dtitle">路線・凡例</div>
+  <div class="dscroll">
+    <div class="sec">市区町村</div>
+    <div class="grid"><div class="li" id="li-muni" onclick="toggleLayer('muni')"><div class="ab"></div><span class="lb">東京都市区町村</span></div></div>
+    <div class="sec">私鉄・地下鉄</div>
+    <div class="grid" id="gp"></div>
+    <div class="sec">JR</div>
+    <div class="grid" id="gj"></div>
+  </div>
+</div>
+<div id="bar">
+  <button class="btn on" id="b-muni" onclick="toggleLayer('muni')">🗺 区市町村</button>
+  <button class="btn on" id="b-rail" onclick="toggleLayer('rail')">🚃 路線図</button>
+  <button class="leg-btn" id="b-leg" onclick="toggleDrawer()">☰</button>
+</div>
+<script>
+const LINES={
+  private:[
+    {key:"tobu",   label:"東武鉄道",   color:"#F56600"},
+    {key:"seibu",  label:"西武鉄道",   color:"#1E4DA1"},
+    {key:"keio",   label:"京王電鉄",   color:"#C4007A"},
+    {key:"odakyu", label:"小田急電鉄", color:"#009CD4"},
+    {key:"tokyu",  label:"東急電鉄",   color:"#E4002B"},
+    {key:"metro",  label:"東京メトロ", color:"#F9A11B"},
+    {key:"toei",   label:"都営地下鉄", color:"#00AC9B"},
+  ],
+  jr:[
+    {key:"yamanote",label:"山手線",color:"#9ACD32"},
+    {key:"chuo",    label:"中央線",color:"#FF4500"},
+    {key:"sobu",    label:"総武線",color:"#FFD700"},
+    {key:"keiyo",   label:"京葉線",color:"#DC143C"},
+    {key:"joban",   label:"常磐線",color:"#6495ED"},
+  ]
+};
+let map,muniLayer,drawerOpen=false;
+const pls={};
+const layerOn={muni:true,rail:true};
+const lineOn={};
+
+// Dynamic Library Import（公式推奨の最新方式）
+async function initMap(){
+  try {
+    var el=document.getElementById("map");
+    el.style.height=(window.innerHeight-52)+"px";
+    window.addEventListener("resize",function(){
+      el.style.height=(window.innerHeight-52)+"px";
+      if(map) google.maps.event.trigger(map,"resize");
+    });
+
+    const {Map} = await google.maps.importLibrary("maps");
+    const {Data} = await google.maps.importLibrary("maps");
+    const {Polyline} = await google.maps.importLibrary("maps");
+
+    map = new Map(el,{
+      center:{lat:35.69,lng:139.70},zoom:11,
+      disableDefaultUI:true,gestureHandling:"greedy",clickableIcons:false,
+      styles:[
+        {featureType:"transit.line",elementType:"geometry",stylers:[{visibility:"off"}]},
+        {featureType:"transit.station",elementType:"labels.icon",stylers:[{visibility:"off"}]}
+      ]
+    });
+
+    buildLegend();
+    setTxt("市区町村データ読込中...");
+    var muniRes = await fetch("municipalities.json");
+    var muniData = await muniRes.json();
+    muniLayer = new google.maps.Data({map:map});
+    muniLayer.addGeoJson(muniData);
+    muniLayer.setStyle({fillColor:"#4a90d9",fillOpacity:.07,strokeColor:"#4a90d9",strokeWeight:1.8,strokeOpacity:.8,clickable:true});
+    muniLayer.addListener("click",function(e){
+      var n=e.feature.getProperty("name");
+      if(n)toast(n);
+    });
+
+    setTxt("路線データ読込中...");
+    var railRes = await fetch("railways.json");
+    var railData = await railRes.json();
+    var cm={};
+    LINES.private.concat(LINES.jr).forEach(function(c){cm[c.key]=c.color;});
+    railData.features.forEach(function(f){
+      var lk=f.properties.l;
+      var color=f.properties.c||cm[lk]||"#888";
+      var coords=f.geometry.coordinates.map(function(p){return{lat:p[1],lng:p[0]};});
+      if(coords.length<2)return;
+      var isJr=f.properties.k==="jr";
+      var pl=new google.maps.Polyline({path:coords,strokeColor:color,strokeWeight:isJr?3.5:3,strokeOpacity:.9,map:map,clickable:false,zIndex:isJr?2:1});
+      if(!pls[lk])pls[lk]=[];
+      pls[lk].push(pl);
+    });
+    document.getElementById("loading").classList.add("hide");
+
+  } catch(e) {
+    document.getElementById("loading").innerHTML=
+      '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">'+
+      '<div style="font-size:40px;margin-bottom:10px">❌</div>'+
+      '<b>エラー</b><br><br>'+e.message+'</div>';
+  }
+}
+
+window.gm_authFailure=function(){
+  document.getElementById("loading").innerHTML=
+    '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">'+
+    '<div style="font-size:40px;margin-bottom:10px">🔑</div>'+
+    '<b>APIキーエラー</b><br><br>Google Cloud ConsoleでAPIキーを確認してください</div>';
+};
+
+function setTxt(t){document.getElementById("ltxt").textContent=t;}
+var _t;
+function toast(msg){
+  var el=document.getElementById("toast");
+  el.textContent=msg;el.classList.add("show");
+  clearTimeout(_t);_t=setTimeout(function(){el.classList.remove("show");},2200);
+}
+function toggleLayer(t){
+  layerOn[t]=!layerOn[t];
+  document.getElementById("b-"+t).classList.toggle("on",layerOn[t]);
+  if(t==="muni"){
+    if(muniLayer)muniLayer.setMap(layerOn.muni?map:null);
+    document.getElementById("li-muni").classList.toggle("off",!layerOn.muni);
+  } else {
+    Object.keys(pls).forEach(function(lk){
+      var show=layerOn.rail&&lineOn[lk]!==false;
+      pls[lk].forEach(function(p){p.setMap(show?map:null);});
+    });
+  }
+}
+function toggleLine(key){
+  lineOn[key]=lineOn[key]===false?true:false;
+  var show=layerOn.rail&&lineOn[key]!==false;
+  (pls[key]||[]).forEach(function(p){p.setMap(show?map:null);});
+  document.getElementById("li-"+key).classList.toggle("off",lineOn[key]===false);
+}
+function toggleDrawer(){
+  drawerOpen=!drawerOpen;
+  document.getElementById("drawer").classList.toggle("on",drawerOpen);
+  document.getElementById("b-leg").classList.toggle("on",drawerOpen);
+}
+document.addEventListener("click",function(e){
+  var dr=document.getElementById("drawer");
+  var bl=document.getElementById("b-leg");
+  if(drawerOpen&&!dr.contains(e.target)&&!bl.contains(e.target))toggleDrawer();
+});
+function buildLegend(){
+  var gp=document.getElementById("gp"),gj=document.getElementById("gj");
+  LINES.private.forEach(function(c){lineOn[c.key]=true;gp.innerHTML+=li(c);});
+  LINES.jr.forEach(function(c){lineOn[c.key]=true;gj.innerHTML+=li(c);});
+}
+function li(c){
+  return '<div class="li" id="li-'+c.key+'" onclick="toggleLine(''+c.key+'')">'+
+    '<div class="ln" style="background:'+c.color+'"></div>'+
+    '<span class="lb">'+c.label+'</span></div>';
+}
+</script>
+<!-- Dynamic Library Import ブートストラップローダ（公式推奨） -->
+<script>
+(g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("language","ja");e.set("region","JP");a.src=`https://maps.${c}apis.com/maps/api/js?`+e;a.onerror=()=>n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a);d[l]=f;a.onload=()=>{[...r].length&&d[l](r,f,n)}}))); d[l]=(...b)=>{return r.add(b[0]),d[q]??=u()};})({
+  key: "AIzaSyDd3mAUK7387OySl-t9LQMmMQ6P-vljR-0",
+  v: "weekly"
+});
+initMap();
+</script>
+</body>
+</html>
