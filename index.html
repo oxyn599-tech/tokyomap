@@ -78,6 +78,7 @@ const LINES={
   ]
 };
 let map,muniLayer,drawerOpen=false;
+var muniLines=[];
 const pls={};
 const layerOn={muni:true,rail:true};
 const lineOn={};
@@ -98,7 +99,12 @@ async function initMap(){
 
     map = new Map(el,{
       center:{lat:35.69,lng:139.70},zoom:11,
-      disableDefaultUI:true,gestureHandling:"greedy",clickableIcons:false,
+      mapTypeControl:false,
+      streetViewControl:false,
+      fullscreenControl:false,
+      zoomControl:true,
+      gestureHandling:"greedy",
+      clickableIcons:false,
       styles:[
         {featureType:"transit.line",elementType:"geometry",stylers:[{visibility:"off"}]},
         {featureType:"transit.station",elementType:"labels.icon",stylers:[{visibility:"off"}]}
@@ -106,17 +112,41 @@ async function initMap(){
     });
 
     buildLegend();
+
+    // ── 市区町村：タップ用の透明レイヤー＋赤点線境界 ──
     setTxt("市区町村データ読込中...");
     var muniRes = await fetch("municipalities.json");
     var muniData = await muniRes.json();
+
+    // タップで名前表示用の透明Data layer
     muniLayer = new google.maps.Data({map:map});
     muniLayer.addGeoJson(muniData);
-    muniLayer.setStyle({fillColor:"#4a90d9",fillOpacity:.07,strokeColor:"#4a90d9",strokeWeight:1.8,strokeOpacity:.8,clickable:true});
+    muniLayer.setStyle({fillColor:"#ff0000",fillOpacity:.03,strokeOpacity:0,clickable:true});
     muniLayer.addListener("click",function(e){
       var n=e.feature.getProperty("name");
       if(n)toast(n);
     });
 
+    // 赤い点線の境界線（Polylineで描画）
+    var dash={path:"M 0,-1 0,1",strokeOpacity:1,scale:2.5};
+    muniData.features.forEach(function(feat){
+      var polys=[];
+      if(feat.geometry.type==="Polygon") polys=feat.geometry.coordinates;
+      else if(feat.geometry.type==="MultiPolygon")
+        feat.geometry.coordinates.forEach(function(p){polys=polys.concat(p);});
+      polys.forEach(function(ring){
+        var path=ring.map(function(c){return{lat:c[1],lng:c[0]};});
+        var pl=new google.maps.Polyline({
+          path:path,strokeColor:"#cc2222",strokeOpacity:0,strokeWeight:2,
+          icons:[{icon:dash,offset:"0",repeat:"9px"}],
+          map:map,clickable:false,zIndex:3
+        });
+        if(!muniLines)muniLines=[];
+        muniLines.push(pl);
+      });
+    });
+
+    // ── 路線図 ──
     setTxt("路線データ読込中...");
     var railRes = await fetch("railways.json");
     var railData = await railRes.json();
@@ -124,11 +154,11 @@ async function initMap(){
     LINES.private.concat(LINES.jr).forEach(function(c){cm[c.key]=c.color;});
     railData.features.forEach(function(f){
       var lk=f.properties.l;
-      var color=f.properties.c||cm[lk]||"#888";
+      var color=f.properties.c||cm[lk]||cm[f.properties.k]||"#888";
       var coords=f.geometry.coordinates.map(function(p){return{lat:p[1],lng:p[0]};});
       if(coords.length<2)return;
       var isJr=f.properties.k==="jr";
-      var pl=new google.maps.Polyline({path:coords,strokeColor:color,strokeWeight:isJr?3.5:3,strokeOpacity:.9,map:map,clickable:false,zIndex:isJr?2:1});
+      var pl=new google.maps.Polyline({path:coords,strokeColor:color,strokeWeight:isJr?4:3,strokeOpacity:.92,map:map,clickable:false,zIndex:isJr?2:1});
       if(!pls[lk])pls[lk]=[];
       pls[lk].push(pl);
     });
@@ -161,6 +191,7 @@ function toggleLayer(t){
   document.getElementById("b-"+t).classList.toggle("on",layerOn[t]);
   if(t==="muni"){
     if(muniLayer)muniLayer.setMap(layerOn.muni?map:null);
+    muniLines.forEach(function(l){l.setMap(layerOn.muni?map:null);});
     document.getElementById("li-muni").classList.toggle("off",!layerOn.muni);
   } else {
     Object.keys(pls).forEach(function(lk){
