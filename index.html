@@ -83,8 +83,8 @@ const pls={};
 const layerOn={muni:true,rail:true};
 const lineOn={};
 
-// Dynamic Library Import（公式推奨の最新方式）
-async function initMap(){
+// test.htmlと同じシンプルな方式
+function initMap(){
   try {
     var el=document.getElementById("map");
     el.style.height=(window.innerHeight-52)+"px";
@@ -93,11 +93,7 @@ async function initMap(){
       if(map) google.maps.event.trigger(map,"resize");
     });
 
-    const {Map} = await google.maps.importLibrary("maps");
-    const {Data} = await google.maps.importLibrary("maps");
-    const {Polyline} = await google.maps.importLibrary("maps");
-
-    map = new Map(el,{
+    map = new google.maps.Map(el,{
       center:{lat:35.69,lng:139.70},zoom:11,
       mapTypeControl:false,
       streetViewControl:false,
@@ -113,62 +109,65 @@ async function initMap(){
 
     buildLegend();
 
-    // ── 市区町村：タップ用の透明レイヤー＋赤点線境界 ──
+    // ── 市区町村 ──
     setTxt("市区町村データ読込中...");
-    var muniRes = await fetch("municipalities.json");
-    var muniData = await muniRes.json();
-
-    // タップで名前表示用の透明Data layer
-    muniLayer = new google.maps.Data({map:map});
-    muniLayer.addGeoJson(muniData);
-    muniLayer.setStyle({fillColor:"#ff0000",fillOpacity:.03,strokeOpacity:0,clickable:true});
-    muniLayer.addListener("click",function(e){
-      var n=e.feature.getProperty("name");
-      if(n)toast(n);
-    });
-
-    // 赤い点線の境界線（Polylineで描画）
-    var dash={path:"M 0,-1 0,1",strokeOpacity:1,scale:2.5};
-    muniData.features.forEach(function(feat){
-      var polys=[];
-      if(feat.geometry.type==="Polygon") polys=feat.geometry.coordinates;
-      else if(feat.geometry.type==="MultiPolygon")
-        feat.geometry.coordinates.forEach(function(p){polys=polys.concat(p);});
-      polys.forEach(function(ring){
-        var path=ring.map(function(c){return{lat:c[1],lng:c[0]};});
-        var pl=new google.maps.Polyline({
-          path:path,strokeColor:"#cc2222",strokeOpacity:0,strokeWeight:2,
-          icons:[{icon:dash,offset:"0",repeat:"9px"}],
-          map:map,clickable:false,zIndex:3
+    fetch("municipalities.json")
+      .then(function(r){return r.json();})
+      .then(function(muniData){
+        // タップ用の透明レイヤー
+        muniLayer=new google.maps.Data({map:map});
+        muniLayer.addGeoJson(muniData);
+        muniLayer.setStyle({fillColor:"#ff0000",fillOpacity:.03,strokeOpacity:0,clickable:true});
+        muniLayer.addListener("click",function(e){
+          var n=e.feature.getProperty("name");
+          if(n)toast(n);
         });
-        if(!muniLines)muniLines=[];
-        muniLines.push(pl);
+        // 赤い点線の境界線
+        var dash={path:"M 0,-1 0,1",strokeOpacity:1,scale:2.5};
+        muniData.features.forEach(function(feat){
+          var polys=[];
+          if(feat.geometry.type==="Polygon") polys=feat.geometry.coordinates;
+          else if(feat.geometry.type==="MultiPolygon")
+            feat.geometry.coordinates.forEach(function(p){polys=polys.concat(p);});
+          polys.forEach(function(ring){
+            var path=ring.map(function(c){return{lat:c[1],lng:c[0]};});
+            var pl=new google.maps.Polyline({
+              path:path,strokeColor:"#cc2222",strokeOpacity:0,strokeWeight:2,
+              icons:[{icon:dash,offset:"0",repeat:"9px"}],
+              map:map,clickable:false,zIndex:3
+            });
+            muniLines.push(pl);
+          });
+        });
+        // ── 路線図 ──
+        setTxt("路線データ読込中...");
+        return fetch("railways.json");
+      })
+      .then(function(r){return r.json();})
+      .then(function(railData){
+        var cm={};
+        LINES.private.concat(LINES.jr).forEach(function(c){cm[c.key]=c.color;});
+        railData.features.forEach(function(f){
+          var lk=f.properties.l;
+          var color=f.properties.c||cm[lk]||cm[f.properties.k]||"#888";
+          var coords=f.geometry.coordinates.map(function(p){return{lat:p[1],lng:p[0]};});
+          if(coords.length<2)return;
+          var isJr=f.properties.k==="jr";
+          var pl=new google.maps.Polyline({path:coords,strokeColor:color,strokeWeight:isJr?4:3,strokeOpacity:.92,map:map,clickable:false,zIndex:isJr?2:1});
+          if(!pls[lk])pls[lk]=[];
+          pls[lk].push(pl);
+        });
+        document.getElementById("loading").classList.add("hide");
+      })
+      .catch(function(e){
+        document.getElementById("loading").innerHTML=
+          '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">'+
+          '<div style="font-size:40px;margin-bottom:10px">❌</div>'+
+          '<b>エラー</b><br><br>'+e.message+'</div>';
       });
-    });
-
-    // ── 路線図 ──
-    setTxt("路線データ読込中...");
-    var railRes = await fetch("railways.json");
-    var railData = await railRes.json();
-    var cm={};
-    LINES.private.concat(LINES.jr).forEach(function(c){cm[c.key]=c.color;});
-    railData.features.forEach(function(f){
-      var lk=f.properties.l;
-      var color=f.properties.c||cm[lk]||cm[f.properties.k]||"#888";
-      var coords=f.geometry.coordinates.map(function(p){return{lat:p[1],lng:p[0]};});
-      if(coords.length<2)return;
-      var isJr=f.properties.k==="jr";
-      var pl=new google.maps.Polyline({path:coords,strokeColor:color,strokeWeight:isJr?4:3,strokeOpacity:.92,map:map,clickable:false,zIndex:isJr?2:1});
-      if(!pls[lk])pls[lk]=[];
-      pls[lk].push(pl);
-    });
-    document.getElementById("loading").classList.add("hide");
-
-  } catch(e) {
+  } catch(e){
     document.getElementById("loading").innerHTML=
-      '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">'+
-      '<div style="font-size:40px;margin-bottom:10px">❌</div>'+
-      '<b>エラー</b><br><br>'+e.message+'</div>';
+      '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">❌ '+e.message+'</div>';
   }
 }
 
@@ -227,13 +226,10 @@ function li(c){
     '<span class="lb">'+c.label+'</span></div>';
 }
 </script>
-<!-- Dynamic Library Import ブートストラップローダ（公式推奨） -->
-<script>
-(g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries",[...r]+"");for(k in g)e.set(k.replace(/[A-Z]/g,t=>"_"+t[0].toLowerCase()),g[k]);e.set("language","ja");e.set("region","JP");a.src=`https://maps.${c}apis.com/maps/api/js?`+e;a.onerror=()=>n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a);d[l]=f;a.onload=()=>{[...r].length&&d[l](r,f,n)}}))); d[l]=(...b)=>{return r.add(b[0]),d[q]??=u()};})({
-  key: "AIzaSyDd3mAUK7387OySl-t9LQMmMQ6P-vljR-0",
-  v: "weekly"
-});
-initMap();
+<!-- test.htmlと同じシンプルな方式 -->
+<script
+  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDd3mAUK7387OySl-t9LQMmMQ6P-vljR-0&loading=async&callback=initMap&language=ja"
+  async defer>
 </script>
 </body>
 </html>
