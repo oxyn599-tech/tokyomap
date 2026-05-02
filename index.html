@@ -217,13 +217,16 @@ document.addEventListener("click",function(e){
 });
 function buildLegend(){
   var gp=document.getElementById("gp"),gj=document.getElementById("gj");
-  LINES.private.forEach(function(c){lineOn[c.key]=true;gp.innerHTML+=li(c);});
-  LINES.jr.forEach(function(c){lineOn[c.key]=true;gj.innerHTML+=li(c);});
+  LINES.private.forEach(function(c){lineOn[c.key]=true;gp.appendChild(li(c));});
+  LINES.jr.forEach(function(c){lineOn[c.key]=true;gj.appendChild(li(c));});
 }
 function li(c){
-  return '<div class="li" id="li-'+c.key+'" onclick="toggleLine(''+c.key+'')">'+
-    '<div class="ln" style="background:'+c.color+'"></div>'+
-    '<span class="lb">'+c.label+'</span></div>';
+  var d=document.createElement("div");
+  d.className="li";
+  d.id="li-"+c.key;
+  d.innerHTML='<div class="ln" style="background:'+c.color+'"></div><span class="lb">'+c.label+'</span>';
+  d.addEventListener("click",function(){toggleLine(c.key);});
+  return d;
 }
 </script>
 <!-- test.htmlと同じシンプルな方式 -->
