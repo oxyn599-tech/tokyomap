@@ -9,14 +9,14 @@
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{width:100%;height:100%;overflow:hidden;font-family:-apple-system,'Helvetica Neue',sans-serif}
 #map{position:absolute;top:0;left:0;right:0;bottom:52px}
-#loading{position:fixed;top:0;left:0;right:0;bottom:0;background:#e8f0fe;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50;font-size:13px;color:#333}
+#loading{position:fixed;top:0;left:0;right:0;bottom:0;background:#e8f0fe;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;z-index:50;font-size:13px;color:#333;transition:opacity .4s}
+#loading.hide{opacity:0;pointer-events:none}
 .spin{width:36px;height:36px;border:3px solid #c5d5f5;border-top-color:#1a73e8;border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
-#loading.hide{display:none}
-#bar{position:fixed;bottom:0;left:0;right:0;height:52px;background:#fff;border-top:1px solid #e0e0e0;display:flex;align-items:center;padding:0 10px;gap:6px;z-index:10}
-.btn{flex:1;height:38px;border:1.5px solid #ddd;border-radius:19px;background:#f5f5f5;font-size:11px;font-weight:700;color:#555;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px}
+#bar{position:fixed;bottom:0;left:0;right:0;height:52px;background:#fff;border-top:1px solid #e0e0e0;display:flex;align-items:center;padding:0 8px;gap:5px;z-index:10}
+.btn{flex:1;height:38px;border:1.5px solid #ddd;border-radius:19px;background:#f5f5f5;font-size:10px;font-weight:700;color:#555;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px}
 .btn.on{background:#1a73e8;border-color:#1a73e8;color:#fff}
-.leg-btn{flex:0 0 42px;font-size:20px;background:#fff;border:1.5px solid #ddd;border-radius:19px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.leg-btn{flex:0 0 40px;font-size:18px;background:#fff;border:1.5px solid #ddd;border-radius:19px;cursor:pointer;display:flex;align-items:center;justify-content:center}
 .leg-btn.on{background:#e8f0fe;border-color:#1a73e8;color:#1a73e8}
 #drawer{position:fixed;left:0;right:0;bottom:52px;background:#fff;border-radius:14px 14px 0 0;box-shadow:0 -3px 16px rgba(0,0,0,.13);transform:translateY(100%);transition:transform .28s ease;z-index:9;max-height:56vh;display:flex;flex-direction:column}
 #drawer.on{transform:translateY(0)}
@@ -78,69 +78,53 @@ const LINES={
     {key:"joban",   label:"常磐線",color:"#6495ED"},
   ]
 };
-let map,muniLayer,drawerOpen=false;
-var muniLines=[];
+var map,muniLayer,drawerOpen=false,stRaw=null;
 var stationMarkers=[];
-const pls={};
-const layerOn={muni:true,rail:true,sta:true};
-const lineOn={};
+var pls={};
+var layerOn={muni:true,rail:true,sta:true};
+var lineOn={};
 
 function initMap(){
-  try {
+  try{
     var el=document.getElementById("map");
     el.style.height=(window.innerHeight-52)+"px";
     window.addEventListener("resize",function(){
       el.style.height=(window.innerHeight-52)+"px";
-      if(map) google.maps.event.trigger(map,"resize");
+      if(map)google.maps.event.trigger(map,"resize");
     });
-
-    map = new google.maps.Map(el,{
+    map=new google.maps.Map(el,{
       center:{lat:35.69,lng:139.70},zoom:11,
-      mapTypeControl:false,
-      streetViewControl:false,
-      fullscreenControl:false,
-      zoomControl:true,
-      gestureHandling:"greedy",
-      clickableIcons:false,
+      mapTypeControl:false,streetViewControl:false,
+      fullscreenControl:false,zoomControl:true,
+      gestureHandling:"greedy",clickableIcons:false,
       styles:[
         {featureType:"transit.line",elementType:"geometry",stylers:[{visibility:"off"}]},
-        {featureType:"transit.station",elementType:"labels.icon",stylers:[{visibility:"off"}]},
-        {featureType:"transit.station",elementType:"labels.text",stylers:[{visibility:"off"}]}
+        {featureType:"transit.station",elementType:"labels",stylers:[{visibility:"off"}]}
       ]
     });
-
     map.addListener("zoom_changed",updateStations);
     buildLegend();
 
-    // ── 市区町村 ──
+    // ── 市区町村（最初に表示してローディング解除） ──
     setTxt("市区町村データ読込中...");
     fetch("municipalities.json")
       .then(function(r){return r.json();})
       .then(function(muniData){
         muniLayer=new google.maps.Data({map:map});
         muniLayer.addGeoJson(muniData);
-        muniLayer.setStyle({fillColor:"#ff0000",fillOpacity:.02,strokeOpacity:0,clickable:true});
+        // 薄い赤の線でDataレイヤー1枚に集約（Polyline不使用でモバイル高速化）
+        muniLayer.setStyle({
+          fillColor:"#dd3333",fillOpacity:.015,
+          strokeColor:"#dd3333",strokeOpacity:.3,
+          strokeWeight:1.2,clickable:true
+        });
         muniLayer.addListener("click",function(e){
           var n=e.feature.getProperty("name");
           if(n)toast(n);
         });
-        // 薄い赤の点線（境界線）
-        var dot={path:"M 0,-1 0,1",strokeOpacity:0.65,scale:1.8};
-        muniData.features.forEach(function(feat){
-          var polys=[];
-          if(feat.geometry.type==="Polygon") polys=feat.geometry.coordinates;
-          else if(feat.geometry.type==="MultiPolygon")
-            feat.geometry.coordinates.forEach(function(p){polys=polys.concat(p);});
-          polys.forEach(function(ring){
-            var path=ring.map(function(c){return{lat:c[1],lng:c[0]};});
-            muniLines.push(new google.maps.Polyline({
-              path:path,strokeColor:"#e05050",strokeOpacity:0,strokeWeight:1.5,
-              icons:[{icon:dot,offset:"0",repeat:"13px"}],
-              map:map,clickable:false,zIndex:3
-            }));
-          });
-        });
-        // ── 路線図 ──
+        // 市区町村読み込み完了 → マップを即座に表示
+        document.getElementById("loading").classList.add("hide");
+        // 路線・駅は裏で引き続き読込
         setTxt("路線データ読込中...");
         return fetch("railways.json");
       })
@@ -156,65 +140,65 @@ function initMap(){
           var isJr=f.properties.k==="jr";
           var pl=new google.maps.Polyline({
             path:coords,strokeColor:color,
-            strokeWeight:isJr?5:4,strokeOpacity:.9,
+            strokeWeight:isJr?5:4,strokeOpacity:.88,
             map:map,clickable:false,zIndex:isJr?2:1
           });
           if(!pls[lk])pls[lk]=[];
           pls[lk].push(pl);
         });
-        // ── 駅名 ──
-        setTxt("駅データ読込中...");
         return fetch("stations.json");
       })
       .then(function(r){return r.json();})
       .then(function(stData){
-        var icon={
-          path:google.maps.SymbolPath.CIRCLE,
-          scale:3.5,
-          fillColor:"#ffffff",
-          fillOpacity:1,
-          strokeColor:"#444444",
-          strokeWeight:1.5
-        };
-        stData.features.forEach(function(f){
-          var m=new google.maps.Marker({
-            position:{lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]},
-            label:{text:f.properties.n,fontSize:"9px",color:"#222222",fontWeight:"600"},
-            icon:icon,
-            map:null,
-            clickable:false,
-            zIndex:10
-          });
-          stationMarkers.push(m);
-        });
+        stRaw=stData; // 遅延生成のためデータを保持
         updateStations();
-        document.getElementById("loading").classList.add("hide");
       })
       .catch(function(e){
-        document.getElementById("loading").innerHTML=
-          '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">'+
-          '<div style="font-size:40px;margin-bottom:10px">❌</div>'+
-          '<b>エラー</b><br><br>'+e.message+'</div>';
+        var ld=document.getElementById("loading");
+        ld.classList.remove("hide");
+        ld.innerHTML='<div style="padding:28px;text-align:center;color:#c00;font-size:14px">'+
+          '❌<br><br>'+e.message+'</div>';
       });
-  } catch(e){
+  }catch(e){
     document.getElementById("loading").innerHTML=
-      '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">❌ '+e.message+'</div>';
+      '<div style="padding:20px;color:#c00">❌ '+e.message+'</div>';
   }
 }
 
 window.gm_authFailure=function(){
   document.getElementById("loading").innerHTML=
-    '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">'+
-    '<div style="font-size:40px;margin-bottom:10px">🔑</div>'+
-    '<b>APIキーエラー</b></div>';
+    '<div style="padding:28px;text-align:center;color:#c00;font-size:14px">🔑 APIキーエラー</div>';
 };
 
+// 駅マーカーをズーム13以上で初めて生成（遅延生成でモバイル高速化）
+function createStationMarkers(){
+  if(!stRaw)return;
+  var icon={
+    path:google.maps.SymbolPath.CIRCLE,
+    scale:3,
+    fillColor:"#ffffff",fillOpacity:1,
+    strokeColor:"#333333",strokeWeight:1.5
+  };
+  stRaw.features.forEach(function(f){
+    var m=new google.maps.Marker({
+      position:{lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]},
+      label:{text:f.properties.n,fontSize:"9px",color:"#111111",fontWeight:"600"},
+      icon:icon,map:null,clickable:false,zIndex:10
+    });
+    stationMarkers.push(m);
+  });
+  stRaw=null;
+}
 function updateStations(){
   if(!map)return;
   var show=layerOn.sta&&map.getZoom()>=13;
+  if(show&&stationMarkers.length===0)createStationMarkers();
   stationMarkers.forEach(function(m){m.setMap(show?map:null);});
 }
-function setTxt(t){document.getElementById("ltxt").textContent=t;}
+function setTxt(t){
+  var el=document.getElementById("ltxt");
+  if(el)el.textContent=t;
+}
 var _t;
 function toast(msg){
   var el=document.getElementById("toast");
@@ -226,15 +210,14 @@ function toggleLayer(t){
   document.getElementById("b-"+t).classList.toggle("on",layerOn[t]);
   if(t==="muni"){
     if(muniLayer)muniLayer.setMap(layerOn.muni?map:null);
-    muniLines.forEach(function(l){l.setMap(layerOn.muni?map:null);});
     document.getElementById("li-muni").classList.toggle("off",!layerOn.muni);
-  } else if(t==="rail"){
+  }else if(t==="rail"){
     Object.keys(pls).forEach(function(lk){
       var show=layerOn.rail&&lineOn[lk]!==false;
       pls[lk].forEach(function(p){p.setMap(show?map:null);});
     });
     updateStations();
-  } else if(t==="sta"){
+  }else if(t==="sta"){
     updateStations();
   }
 }
@@ -250,8 +233,7 @@ function toggleDrawer(){
   document.getElementById("b-leg").classList.toggle("on",drawerOpen);
 }
 document.addEventListener("click",function(e){
-  var dr=document.getElementById("drawer");
-  var bl=document.getElementById("b-leg");
+  var dr=document.getElementById("drawer"),bl=document.getElementById("b-leg");
   if(drawerOpen&&!dr.contains(e.target)&&!bl.contains(e.target))toggleDrawer();
 });
 function buildLegend(){
@@ -261,8 +243,7 @@ function buildLegend(){
 }
 function li(c){
   var d=document.createElement("div");
-  d.className="li";
-  d.id="li-"+c.key;
+  d.className="li";d.id="li-"+c.key;
   d.innerHTML='<div class="ln" style="background:'+c.color+'"></div><span class="lb">'+c.label+'</span>';
   d.addEventListener("click",function(){toggleLine(c.key);});
   return d;
